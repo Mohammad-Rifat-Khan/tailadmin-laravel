@@ -59,7 +59,7 @@ jobs:
 
                 docker run -d \
                     --name tailadmin-app \
-                    -p 8000:8000 \
+                    -p 800:800 \
                     --restart unless-stopped \
                     -e APP_ENV=production \
                     -e APP_DEBUG=false \
@@ -72,3 +72,5 @@ jobs:
                     -e DB_USERNAME=laravel \
                     -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
                     ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+                
+                docker exec tailadmin-app php artisan migrate --force

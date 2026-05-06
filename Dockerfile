@@ -1,38 +1,87 @@
-FROM php:8.3-cli
+# Stage 1: Frontend Builder
+FROM node:22-alpine AS frontend
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm ci
+
+COPY . .
+
+RUN npm run build
+
+# Stage 2: Composer Builder
+FROM composer:2 AS vendor
+
+WORKDIR /app
+
+COPY composer.json composer.lock ./
+
+RUN composer install \
+    --no-dev \
+    --prefer-dist \
+    --optimize-autoloader \
+    --no-interaction
+
+# Stage 3: Production Image
+FROM php:8.3-apache
 
 WORKDIR /var/www/html
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    git \
-    curl \
     unzip \
     zip \
+    git \
+    curl \
     libzip-dev \
     libonig-dev \
-    nodejs \
-    npm \
-    && docker-php-ext-install pdo_mysql mbstring zip bcmath \
+    && docker-php-ext-install \
+    pdo_mysql \
+    mbstring \
+    zip \
+    bcmath \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Composer
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+# Enable Apache rewrite module
+RUN a2enmod rewrite
+
+# Configure Apache document root
+ENV APACHE_DOCUMENT_ROOT /var/www/html/public
+
+RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' \
+    /etc/apache2/sites-available/*.conf \
+    /etc/apache2/apache2.conf \
+    /etc/apache2/conf-available/*.conf
 
 # Copy application files
 COPY . .
 
-# Install PHP dependencies
-RUN composer install --no-dev --optimize-autoloader
+# Copy vendor from composer stage
+COPY --from=vendor /app/vendor ./vendor
 
-# Install frontend dependencies and build assets
-RUN npm install && npm run build
+# Copy built frontend assets
+COPY --from=frontend /app/public/build ./public/build
 
-# Set proper permissions
-RUN chmod -R 775 storage bootstrap/cache
+# Create Laravel directories
+RUN mkdir -p \
+    storage/framework/views \
+    storage/framework/cache \
+    storage/framework/sessions \
+    storage/logs \
+    bootstrap/cache
 
-# Expose Laravel port
-EXPOSE 8000
+# Set permissions
+RUN chown -R www-data:www-data /var/www/html \
+    && chmod -R 775 storage bootstrap/cache
 
-# Start Laravel application
-CMD ["sh", "-c", "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000"]
+# Healthcheck
+HEALTHCHECK CMD curl --fail http://localhost || exit 1
+
+# Expose Apache port
+EXPOSE 80
+
+# Start Apache
+CMD ["apache2-foreground"]
