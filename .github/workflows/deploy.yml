@@ -59,7 +59,7 @@ jobs:
 
                 docker run -d \
                     --name tailadmin-app \
-                    -p 800:800 \
+                    -p 80:80 \
                     --restart unless-stopped \
                     -e APP_ENV=production \
                     -e APP_DEBUG=false \
