@@ -137,43 +137,75 @@ jobs:
 
           script: |
             aws ecr get-login-password \
-              --region ${{ secrets.AWS_REGION }} | \
-              docker login \
-              --username AWS \
-              --password-stdin \
-              ${{ secrets.ECR_REGISTRY }}
+                --region ${{ secrets.AWS_REGION }} | \
+                docker login \
+                --username AWS \
+                --password-stdin \
+                ${{ secrets.ECR_REGISTRY }}
 
             docker pull \
-              ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ steps.image.outputs.tag }}
+                ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ steps.image.outputs.tag }}
 
-            docker stop tailadmin-app || true
-            docker rm tailadmin-app || true
+            # Detect active environment
+            if grep -q "8081" /etc/nginx/sites-available/tailadmin; then
+                ACTIVE="blue"
+                NEW="green"
+                NEW_PORT="8082"
+            else
+                ACTIVE="green"
+                NEW="blue"
+                NEW_PORT="8081"
+            fi
+
+            echo "Active: $ACTIVE"
+            echo "Deploying: $NEW"
+
+            # Remove old new container if exists
+            docker stop tailadmin-$NEW || true
+            docker rm tailadmin-$NEW || true
+
+            # Start new container
             docker run -d \
-              --name tailadmin-app \
-              -p 80:80 \
-              --restart unless-stopped \
-              -e APP_ENV="production" \
-              -e APP_DEBUG=false \
-              -e APP_URL=http://${{ secrets.EC2_HOST }} \
-              -e APP_KEY="${{ secrets.APP_KEY }}" \
-              -e DB_CONNECTION=mysql \
-              -e DB_HOST="${{ secrets.RDS_ENDPOINT }}" \
-              -e DB_PORT=3306 \
-              -e DB_DATABASE=tailadmin_laravel \
-              -e DB_USERNAME=laravel \
-              -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
-              ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ steps.image.outputs.tag }}
-            
-            sleep 15
+                --name tailadmin-$NEW \
+                -p $NEW_PORT:80 \
+                --restart unless-stopped \
+                -e APP_ENV="production" \
+                -e APP_DEBUG="false" \
+                -e APP_URL="http://${{ secrets.EC2_HOST }}" \
+                -e APP_KEY="${{ secrets.APP_KEY }}" \
+                -e DB_CONNECTION="mysql" \
+                -e DB_HOST="${{ secrets.RDS_ENDPOINT }}" \
+                -e DB_PORT="3306" \
+                -e DB_DATABASE="tailadmin_laravel" \
+                -e DB_USERNAME="laravel" \
+                -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+                ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ steps.image.outputs.tag }}
 
-            docker exec tailadmin-app php artisan migrate --force
+            # Wait for app boot
+            sleep 20
 
-            docker exec tailadmin-app php artisan optimize:clear
+            # Laravel optimizations
+            docker exec tailadmin-$NEW php artisan migrate --force
 
-            docker exec tailadmin-app php artisan config:cache
-            docker exec tailadmin-app php artisan route:cache
-            docker exec tailadmin-app php artisan view:cache
+            docker exec tailadmin-$NEW php artisan optimize:clear
 
-            curl -f http://localhost || exit 1
+            docker exec tailadmin-$NEW php artisan config:cache
 
+            docker exec tailadmin-$NEW php artisan route:cache
+
+            docker exec tailadmin-$NEW php artisan view:cache
+
+            # Health check
+            curl -f http://localhost:$NEW_PORT || exit 1
+
+            # Switch nginx traffic
+            sudo sed -i "s/8081\|8082/$NEW_PORT/" /etc/nginx/sites-available/tailadmin
+
+            sudo systemctl reload nginx
+
+            # Remove old container
+            docker stop tailadmin-$ACTIVE || true
+            docker rm tailadmin-$ACTIVE || true
+
+            # Cleanup
             docker image prune -af
