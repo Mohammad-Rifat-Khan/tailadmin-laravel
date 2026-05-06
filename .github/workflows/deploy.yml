@@ -1,4 +1,4 @@
-name: Deploy Laravel App
+name: Laravel CI/CD Pipeline
 
 on:
   push:
@@ -8,17 +8,52 @@ on:
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-  IMAGE_TAG: latest
 
 jobs:
-  deploy:
+  build:
+    name: Build & Push Docker Image
     runs-on: ubuntu-latest
 
+    outputs:
+      image_tag: ${{ steps.image.outputs.tag }}
+
     steps:
-      - name: Checkout source code
+      - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+          extensions: mbstring, pdo, pdo_mysql
+          coverage: none
+
+      - name: Cache Composer Dependencies
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ runner.os }}-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            composer-${{ runner.os }}-
+
+      - name: Install Dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Prepare Laravel Environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Run Laravel Tests
+        run: php artisan test
+
+      - name: Optimize Laravel
+        run: |
+          php artisan config:cache
+          php artisan route:cache
+          php artisan view:cache
+
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -29,48 +64,105 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build Docker image
-        run: |
-          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+      - name: Generate Image Tag
+        id: image
+        run: echo "tag=${GITHUB_SHA}" >> $GITHUB_OUTPUT
 
-      - name: Tag Docker image
+      - name: Build Docker Image
         run: |
-          docker tag $ECR_REPOSITORY:$IMAGE_TAG \
-          ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
+          docker build \
+            -t $ECR_REPOSITORY:${{ steps.image.outputs.tag }} .
 
-      - name: Push Docker image to ECR
+      - name: Scan Docker Image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REPOSITORY }}:${{ steps.image.outputs.tag }}
+          format: table
+          exit-code: 0
+
+      - name: Tag Docker Image
+        run: |
+          docker tag \
+            $ECR_REPOSITORY:${{ steps.image.outputs.tag }} \
+            ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ steps.image.outputs.tag }}
+
+      - name: Push Docker Image
         run: |
           docker push \
-          ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
+            ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ steps.image.outputs.tag }}
 
-      - name: Deploy to EC2
+      - name: Create Image Artifact
+        run: |
+          echo "${{ steps.image.outputs.tag }}" > image-tag.txt
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-tag
+          path: image-tag.txt
+
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-tag
+
+      - name: Read Image Tag
+        id: image
+        run: |
+          echo "tag=$(cat image-tag.txt)" >> $GITHUB_OUTPUT
+
+      - name: Deploy Application
         uses: appleboy/ssh-action@v1.0.3
         with:
-            host: ${{ secrets.EC2_HOST }}
-            username: ${{ secrets.EC2_USER }}
-            key: ${{ secrets.EC2_SSH_KEY }}
-            script: |
-                aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
 
-                docker pull ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+          script: |
+            aws ecr get-login-password \
+              --region ${{ secrets.AWS_REGION }} | \
+              docker login \
+              --username AWS \
+              --password-stdin \
+              ${{ secrets.ECR_REGISTRY }}
 
-                docker stop tailadmin-app || true
-                docker rm tailadmin-app || true
+            docker pull \
+              ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ steps.image.outputs.tag }}
 
-                docker run -d \
-                    --name tailadmin-app \
-                    -p 80:80 \
-                    --restart unless-stopped \
-                    -e APP_ENV=production \
-                    -e APP_DEBUG=false \
-                    -e APP_URL=http://${{ secrets.EC2_HOST }}:8000 \
-                    -e APP_KEY=${{ secrets.APP_KEY }} \
-                    -e DB_CONNECTION=mysql \
-                    -e DB_HOST=${{ secrets.RDS_ENDPOINT }} \
-                    -e DB_PORT=3306 \
-                    -e DB_DATABASE=tailadmin_laravel \
-                    -e DB_USERNAME=laravel \
-                    -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
-                    ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
-                
-                docker exec tailadmin-app php artisan migrate --force
+            docker stop tailadmin-app || true
+            docker rm tailadmin-app || true
+            docker run -d \
+              --name tailadmin-app \
+              -p 80:80 \
+              --restart unless-stopped \
+              -e APP_ENV=production \
+              -e APP_DEBUG=false \
+              -e APP_URL=http://${{ secrets.EC2_HOST }} \
+              -e APP_KEY="${{ secrets.APP_KEY }}" \
+              -e DB_CONNECTION=mysql \
+              -e DB_HOST="${{ secrets.RDS_ENDPOINT }}" \
+              -e DB_PORT=3306 \
+              -e DB_DATABASE=tailadmin_laravel \
+              -e DB_USERNAME=laravel \
+              -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ steps.image.outputs.tag }}
+            
+              sleep 15
+
+            docker exec tailadmin-app php artisan migrate --force
+
+            docker exec tailadmin-app php artisan optimize:clear
+
+            docker exec tailadmin-app php artisan config:cache
+            docker exec tailadmin-app php artisan route:cache
+            docker exec tailadmin-app php artisan view:cache
+
+            curl -f http://localhost || exit 1
+
+            docker image prune -af
