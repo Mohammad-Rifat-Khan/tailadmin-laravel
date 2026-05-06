@@ -46,32 +46,29 @@ jobs:
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
-            | docker login --username AWS --password-stdin \
-            ${{ steps.login-ecr.outputs.registry }}
+            host: ${{ secrets.EC2_HOST }}
+            username: ${{ secrets.EC2_USER }}
+            key: ${{ secrets.EC2_SSH_KEY }}
+            script: |
+                aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
 
-            docker pull \
-            ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
+                docker pull ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
-            docker stop tailadmin-app || true
-            docker rm tailadmin-app || true
+                docker stop tailadmin-app || true
+                docker rm tailadmin-app || true
 
-            docker run -d \
-              --name tailadmin-app \
-              -p 8000:8000 \
-              --restart unless-stopped \
-              -e APP_ENV=production \
-              -e APP_DEBUG=false \
-              -e APP_URL=http://${{ secrets.EC2_HOST }}:8000 \
-              -e APP_KEY=${{ secrets.APP_KEY }} \
-              -e DB_CONNECTION=mysql \
-              -e DB_HOST=${{ secrets.RDS_ENDPOINT }} \
-              -e DB_PORT=3306 \
-              -e DB_DATABASE=tailadmin_laravel \
-              -e DB_USERNAME=laravel \
-              -e DB_PASSWORD='YOUR_DB_PASSWORD' \
-              ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
+                docker run -d \
+                    --name tailadmin-app \
+                    -p 8000:8000 \
+                    --restart unless-stopped \
+                    -e APP_ENV=production \
+                    -e APP_DEBUG=false \
+                    -e APP_URL=http://${{ secrets.EC2_HOST }}:8000 \
+                    -e APP_KEY=${{ secrets.APP_KEY }} \
+                    -e DB_CONNECTION=mysql \
+                    -e DB_HOST=${{ secrets.RDS_ENDPOINT }} \
+                    -e DB_PORT=3306 \
+                    -e DB_DATABASE=tailadmin_laravel \
+                    -e DB_USERNAME=laravel \
+                    -e DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
+                    ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
