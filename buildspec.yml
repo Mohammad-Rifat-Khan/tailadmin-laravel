@@ -1,15 +1,81 @@
 version: 0.2
 
+env:
+  variables:
+    IMAGE_REPO_NAME: tailadmin-laravel
+
 phases:
   install:
     runtime-versions:
       docker: 20
+      php: 8.3
+      nodejs: 22
+
+    commands:
+      - echo Installing system dependencies...
+      - apt-get update -y
+      - apt-get install -y jq
+
   pre_build:
     commands:
-      - echo "Starting build"
+      - echo Logging in to Amazon ECR...
+
+      - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+      - ECR_REGISTRY=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+
+      - IMAGE_URI=$ECR_REGISTRY/$IMAGE_REPO_NAME:$COMMIT_HASH
+
+      - echo Installing Node dependencies...
+      - npm ci
+
+      - echo Building frontend assets...
+      - npm run build
+
+      - echo Installing Composer dependencies...
+      - composer install \
+          --no-dev \
+          --prefer-dist \
+          --optimize-autoloader \
+          --no-interaction
+
+      - cp .env.example .env
+
+      - php artisan key:generate
+
   build:
     commands:
-      - docker build -t laravel-app .
+      - echo Running Laravel tests...
+      - php artisan test
+
+      - echo Building Docker image...
+      - docker build -t $IMAGE_URI .
+
+      - echo Running Trivy security scan...
+
+      - docker run --rm \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy image \
+          --severity HIGH,CRITICAL \
+          --exit-code 0 \
+          $IMAGE_URI
+
   post_build:
     commands:
-      - echo "Build done"
+      - echo Pushing image to ECR...
+
+      - docker push $IMAGE_URI
+
+      - echo Creating image definition artifact...
+
+      - printf '{\"ImageURI\":\"%s\"}' $IMAGE_URI > imageDetail.json
+
+artifacts:
+  files:
+    - appspec.yml
+    - imageDetail.json
+    - scripts/**/*

@@ -3,13 +3,25 @@ os: linux
 
 files:
   - source: /
-    destination: /home/ubuntu/app
+    destination: /home/ubuntu/tailadmin
 
 hooks:
   BeforeInstall:
-    - location: scripts/create_env.sh
+    - location: scripts/before_install.sh
       timeout: 300
+      runas: root
 
   AfterInstall:
-    - location: scripts/deploy.sh
+    - location: scripts/after_install.sh
       timeout: 300
+      runas: root
+
+  ApplicationStart:
+    - location: scripts/application_start.sh
+      timeout: 600
+      runas: root
+
+  ValidateService:
+    - location: scripts/validate_service.sh
+      timeout: 300
+      runas: root
