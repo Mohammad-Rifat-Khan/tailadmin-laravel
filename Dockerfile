@@ -12,17 +12,21 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Composer Builder
-FROM composer:2 AS vendor
+FROM composer:2.8 AS vendor
 
 WORKDIR /app
 
 COPY composer.json composer.lock ./
+
+RUN composer config platform.php 8.3.0
 
 RUN composer install \
     --no-dev \
     --prefer-dist \
     --optimize-autoloader \
     --no-interaction
+
+RUN composer clear-cache
 
 # Stage 3: Production Image
 FROM php:8.3-apache
