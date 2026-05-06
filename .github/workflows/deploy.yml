@@ -141,7 +141,7 @@ jobs:
               --name tailadmin-app \
               -p 80:80 \
               --restart unless-stopped \
-              -e APP_ENV=production \
+              -e APP_ENV="production" \
               -e APP_DEBUG=false \
               -e APP_URL=http://${{ secrets.EC2_HOST }} \
               -e APP_KEY="${{ secrets.APP_KEY }}" \
@@ -153,7 +153,7 @@ jobs:
               -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
               ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ steps.image.outputs.tag }}
             
-              sleep 15
+            sleep 15
 
             docker exec tailadmin-app php artisan migrate --force
 
