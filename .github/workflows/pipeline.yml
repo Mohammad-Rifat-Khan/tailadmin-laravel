@@ -172,6 +172,7 @@ jobs:
                 -e APP_ENV="production" \
                 -e APP_DEBUG="false" \
                 -e APP_URL="http://${{ secrets.EC2_HOST }}" \
+                -e APP_KEY='${{ secrets.APP_KEY }}' \
                 -e DB_CONNECTION="mysql" \
                 -e DB_HOST="${{ secrets.RDS_ENDPOINT }}" \
                 -e DB_PORT="3306" \
