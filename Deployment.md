@@ -64,9 +64,9 @@ Prepared for future migration to:
 
 ```text
 AWS CodePipeline
-↓
+        ↓
 AWS CodeBuild
-↓
+        ↓
 AWS CodeDeploy
 ```
 
