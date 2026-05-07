@@ -7,7 +7,7 @@ cd /home/ubuntu/tailadmin
 
 IMAGE_URI=$(cat imageDetail.json | jq -r '.ImageURI')
 
-# Detect active environment
+# Detects active environment
 if grep -q "8081" /etc/nginx/sites-available/tailadmin; then
     ACTIVE="blue"
     NEW="green"
@@ -21,11 +21,11 @@ fi
 echo "Active: $ACTIVE"
 echo "Deploying: $NEW"
 
-# Remove target container if exists
+# Removes target container if exists
 docker stop "tailadmin-$NEW" || true
 docker rm "tailadmin-$NEW" || true
 
-# Start new container
+# Starts new container
 docker run -d \
     --name "tailadmin-$NEW" \
     -p "$NEW_PORT:80" \

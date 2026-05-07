@@ -18,7 +18,7 @@ phases:
 
   pre_build:
     commands:
-      - echo Logging in to Amazon ECR...
+      - echo Logging in to Amazon ECR!!
 
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
@@ -30,13 +30,13 @@ phases:
 
       - IMAGE_URI=$ECR_REGISTRY/$IMAGE_REPO_NAME:$COMMIT_HASH
 
-      - echo Installing Node dependencies...
+      - echo Installing Node dependencies!!
       - npm ci
 
-      - echo Building frontend assets...
+      - echo Building frontend assets!!
       - npm run build
 
-      - echo Installing Composer dependencies...
+      - echo Installing Composer dependencies!!
       - composer install \
           --no-dev \
           --prefer-dist \
