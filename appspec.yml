@@ -1,11 +1,19 @@
 version: 0.0
+
 os: linux
 
 files:
   - source: /
     destination: /home/ubuntu/tailadmin
 
+permissions:
+  - object: /home/ubuntu/tailadmin
+    owner: ubuntu
+    group: ubuntu
+    mode: 755
+
 hooks:
+
   BeforeInstall:
     - location: scripts/before_install.sh
       timeout: 300
@@ -13,15 +21,15 @@ hooks:
 
   AfterInstall:
     - location: scripts/after_install.sh
-      timeout: 300
-      runas: root
-
-  ApplicationStart:
-    - location: scripts/application_start.sh
       timeout: 600
       runas: root
 
+  ApplicationStart:
+    - location: scripts/deploy.sh
+      timeout: 900
+      runas: root
+
   ValidateService:
-    - location: scripts/validate_service.sh
+    - location: scripts/validate.sh
       timeout: 300
       runas: root

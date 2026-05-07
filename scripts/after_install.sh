@@ -1,12 +1,21 @@
 #!/bin/bash
+
 set -e
 
-echo "Running after_install.sh"
+echo "Starting AfterInstall phase..."
 
-cd /home/ubuntu/tailadmin
+apt-get update -y
 
-IMAGE_URI=$(cat imageDetail.json | jq -r '.ImageURI')
+apt-get install -y docker.io nginx awscli curl
 
-echo "Pulling Docker image: $IMAGE_URI"
+systemctl enable docker
+systemctl start docker
 
-docker pull "$IMAGE_URI"
+systemctl enable nginx
+systemctl start nginx
+
+usermod -aG docker ubuntu || true
+
+mkdir -p /home/ubuntu/tailadmin
+
+echo "AfterInstall completed."

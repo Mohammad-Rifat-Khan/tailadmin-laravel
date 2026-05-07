@@ -3,59 +3,79 @@ version: 0.2
 env:
   variables:
     IMAGE_REPO_NAME: tailadmin-laravel
+    AWS_DEFAULT_REGION: us-east-1
 
 phases:
   install:
     runtime-versions:
-      docker: 20
       php: 8.3
       nodejs: 22
 
     commands:
-      - echo Installing system dependencies...
+      - echo "Installing system dependencies"
       - apt-get update -y
-      - apt-get install -y jq
+      - apt-get install -y unzip curl jq
+
+      - echo "Installing Composer"
+      - curl -sS https://getcomposer.org/installer | php
+      - mv composer.phar /usr/local/bin/composer
+
+      - echo "Verifying versions"
+      - php -v
+      - node -v
+      - npm -v
+      - composer --version
+      - docker --version
 
   pre_build:
     commands:
-      - echo Logging in to Amazon ECR!!
+      - echo "Logging into Amazon ECR"
 
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
       - ECR_REGISTRY=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
 
+      - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+
+      - IMAGE_URI=$ECR_REGISTRY/$IMAGE_REPO_NAME:$IMAGE_TAG
+
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
-
-      - IMAGE_URI=$ECR_REGISTRY/$IMAGE_REPO_NAME:$COMMIT_HASH
-
-      - echo Installing Node dependencies!!
-      - npm ci
-
-      - echo Building frontend assets!!
-      - npm run build
-
-      - echo Installing Composer dependencies!!
-      - composer install \
-          --no-dev \
-          --prefer-dist \
-          --optimize-autoloader \
-          --no-interaction
+      - echo "Preparing Laravel environment"
 
       - cp .env.example .env
 
-      - php artisan key:generate
+      - echo "Installing Node dependencies"
+      - npm ci
+
+      - echo "Building frontend assets"
+      - npm run build
+
+      - echo "Installing Composer dependencies"
+      - composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - echo "Running Laravel optimization"
+      - php artisan config:cache
+      - php artisan route:cache
+      - php artisan view:cache
+
+      - echo "Running tests"
+      - php artisan test
 
   build:
     commands:
-      - echo Running Laravel tests...
-      - php artisan test
+      - echo "Pulling latest image for Docker layer caching"
+      - docker pull $ECR_REGISTRY/$IMAGE_REPO_NAME:latest || true
 
-      - echo Building Docker image...
-      - docker build -t $IMAGE_URI .
+      - echo "Building Docker image..."
 
-      - echo Running Trivy security scan...
+      - docker build \
+          --cache-from $ECR_REGISTRY/$IMAGE_REPO_NAME:latest \
+          -t $IMAGE_URI \
+          -t $ECR_REGISTRY/$IMAGE_REPO_NAME:latest \
+          .
+
+      - echo "Running Trivy security scan..."
 
       - docker run --rm \
           -v /var/run/docker.sock:/var/run/docker.sock \
@@ -66,16 +86,25 @@ phases:
 
   post_build:
     commands:
-      - echo Pushing image to ECR...
+      - echo "Pushing Docker images to ECR"
 
       - docker push $IMAGE_URI
 
-      - echo Creating image definition artifact...
+      - docker push $ECR_REGISTRY/$IMAGE_REPO_NAME:latest
 
-      - printf '{\"ImageURI\":\"%s\"}' $IMAGE_URI > imageDetail.json
+      - echo "Generating image definitions artifact"
+
+      - printf '{"ImageURI":"%s"}' $IMAGE_URI > imageDetail.json
+
+      - echo "Build completed successfully."
 
 artifacts:
   files:
-    - appspec.yml
     - imageDetail.json
+    - appspec.yml
     - scripts/**/*
+
+cache:
+  paths:
+    - '/root/.composer/cache/**/*'
+    - 'node_modules/**/*'
